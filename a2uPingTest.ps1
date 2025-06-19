@@ -1,5 +1,7 @@
 ﻿# Nastavitve
-$logPath = "C:\Logs\PingLogs" # Pot do mape, kjer bodo log datoteke
+#Path to the folder where the log files will be located
+$logPath = "C:\Logs\PingLogs"
+
 param(
 [string]$ftpServer = "" # FTP strežnik
 [string]$ftpUser = ""
@@ -8,24 +10,24 @@ param(
 
 $computerName = $env:COMPUTERNAME
 
-# Preveri, če mapa obstaja, sicer jo ustvari
+# Check if the folder exists, otherwise create it
 if (!(Test-Path $logPath)) {
     New-Item -ItemType Directory -Path $logPath
 }
 
-# Pridobi privzeti gateway
+# Get default gateway
 $gateway = (Get-NetRoute -DestinationPrefix "0.0.0.0/0" | Select-Object -First 1).NextHop
 $targets = @($gateway, "google.com", "192.168.1.1", "192.168.1.174")
 
-# Nastavi začetni čas na začetku
+# Set the start time at the beginning
 $previousTime = Get-Date
 
 while ($true) {
-    # Ustvari ime datoteke z današnjim datumom in imenom računalnika
+    # Create a file name with today's date and computer name
     $fileName = "PingLog_${computerName}_$(Get-Date -Format 'yyyy-MM-dd').txt"
     $filePath = Join-Path $logPath $fileName
 
-    # Zaženi pinge asinhrono
+    # Run pings asynchronously
     $jobs = @()
     foreach ($target in $targets) {
         $jobs += Start-Job -ScriptBlock {
@@ -48,48 +50,48 @@ while ($true) {
         } -ArgumentList $target
     }
 
-    # Počakaj, da se vsi jobi zaključijo, nato shrani rezultate
+    # Wait for all jobs to complete, then save the results
     $jobs | Wait-Job | Receive-Job | ForEach-Object {
         "$($_.Timestamp) - Ping rezultat do $($_.Target): $($_.PingResult)" | Out-File -FilePath $filePath -Append
     }
 
-    # Počisti zaključene jobe
+    # Clear completed jobs
     $jobs | Remove-Job
 
-        # Trenutni čas
+    # current time
     $currentTime = Get-Date
 
-    # Izračunaj časovno razliko od zadnjega dogodka
+    # Calculate time since last upload 
     $elapsedTime = $currentTime - $previousTime
 
-    # Preveri, če je preteklo več kot 60 sekund (ali poljubna vrednost)
+    # check if more then 30 second has gon bay
     if ($elapsedTime.TotalSeconds -ge 30) {
         Write-Output "Preteklo je $($elapsedTime.TotalSeconds) sekund od zadnjega dogodka."
 
 
 
-        # Naloži datoteko na FTP
+        # upload to FTP
         Start-Job -ScriptBlock {
             param($ftpUri, $filePath, $ftpUser, $ftpPass)
             try {
                 $webclient = New-Object System.Net.WebClient
                 $webclient.Credentials = New-Object System.Net.NetworkCredential($ftpUser, $ftpPass)
                 $webclient.UploadFile($ftpUri, $filePath)
-                Write-Output "FTP upload uspešen."
+                Write-Output "FTP transfer successful."
             }
             catch {
-                Write-Output "Napaka pri FTP uploadu: $_"
+                Write-Output "FTP upload error: $_"
                 Write-Output $ftpUri
             }
         } -ArgumentList "$ftpServer/web/pings/$fileName", $filePath, $ftpUser, $ftpPass | Out-Null
         $previousTime = $currentTime
     }
 
-    # Brisanje datotek starejših kot 7 dni
+    # delete files older then 7 days
     Get-ChildItem -Path $logPath -Filter "PingLog_*.txt" | 
         Where-Object { $_.CreationTime -lt (Get-Date).AddDays(-7) } |
         Remove-Item -Force
 
-    # Počakaj 60 sekund
+    # wait x sec
     Start-Sleep -Seconds 1
 }
